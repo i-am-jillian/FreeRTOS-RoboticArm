@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <atomic>
+#include <Adafruit_TCS34725.h>
 
 Adafruit_PWMServoDriver pwm(0x40);
 
@@ -108,6 +109,13 @@ std::atomic<bool> pauseRequested(true);
 int currentYaw = YAW_HOME;
 int currentPitch = PITCH_RETRACT;
 int currentGrip = GRIP_CLOSED;
+
+//sensor pinouts
+const int TRIG = 5; //both these values are arbitrary - change to actual values
+const int ECHO = 18;
+
+//color sensor initializiation
+Adafruit_TCS34725 tcs(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X); //arguments to be tuned
 
 // ------------------------------------------
 // pwm conversion
@@ -302,12 +310,41 @@ bool moveAndWait(MotorType motor, int position) {
 // return true when an object is at the pickup base
 // keep this function short so sensor task can keep running
 bool detectObject() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+
+  unsigned long us = pulseIn(ECHO, HIGH, 30000); //pulseIn is NOT REAL TIME. To be implemented: Interrupt on ECHO change, timestamp interrupts, and measure difference.
+  float cm = us * .0343f / 2.0f
+
+  if(cm >= 2 && cm <= 400) { //max specd distance - adjust if readings are faulty
+    return true;
+  }
+
   return false;
 }
 
 // jake will add color sensor code here
 // return the color of the object at the base
 ObjectColor detectColor() {
+  uint16_t r, g, b, c;
+  tcs.getRawData(&r, &g, &b, &c);
+
+  if (c < 100) { //tune "100" to match up with value seen when there's nothing there
+    return COLOR_UNKNOWN;
+  }                          
+  else if (r > g * 1.5f && r > b * 1.5f) { //multipliers to ensure color is strongly red, green, or blue. to be tuned based on actual readings
+      return COLOR_RED;
+  }
+  else if (g > r * 1.2f && g > b * 1.2f) {
+      return COLOR_GREEN;
+  }
+  else if (b > r * 1.2f && b > g * 1.2f) {
+    return COLOR_BLUE;
+  }
+    
   return COLOR_UNKNOWN;
 }
 
@@ -647,6 +684,16 @@ void setup() {
   if (digitalRead(EMERGENCY_BUTTON) == LOW) {
     emergencyStop.store(true);
     Serial.println("emergency stop active");
+  }
+
+  //initialize ultrasonic sensor
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  //initialize color sensor
+  while(!tcs.begin) {
+    Serial.println("Color sensor not found");
+    delay(1000);
   }
 
   // initialize i2c
